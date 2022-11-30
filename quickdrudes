@@ -1,0 +1,463 @@
+#!/usr/bin/env python
+
+
+"""
+Created on Wed Nov 30 11:09:03 2022
+
+@author: ccorsini
+"""
+
+
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
+import numpy as np
+import mdtraj as md
+import argparse
+
+# -------------------------------------------------------------------------------------
+
+
+class Atoms:
+    """
+    A class to represent an atom.
+
+    ...
+
+    Attributes
+    ----------
+    name : string
+        atom name
+    indexes: numpy.ndarray
+        indexes of the atom in the trajectory
+    number : int
+        number of atoms in the system
+        
+    """
+ 
+    def __init__(self, name, indexes):
+        """
+        Constructs all the necessary attributes for the atom object.
+
+        Parameters
+        ----------
+        name : string
+            atom name
+        indexes: numpy.ndarray
+            indexes of the atom in the trajectory
+
+        Returns
+        -------
+        all attributes of atom object, namely name, index and number
+
+        """
+    
+        self.name = name
+        self.indexes = indexes
+        self.number = len(indexes)
+        
+# ------------------------------------------------------------------------------------
+
+def remove_no_drudes(atoms, no_drudes, atom_number):
+    """ 
+    This function removes the atoms without drudes from the list of atoms instances
+    
+    Parameters
+    ----------
+    atoms : list
+        list of instances of class Atoms.
+    no_drudes : list of strings
+        list of elements without drudes
+    atom_number : int
+        total number of atom types
+
+    Returns
+    -------
+    list of atoms istances and atom_number without accounting for atoms without drudes
+
+    """
+    
+    ind = []
+
+    for atom in no_drudes:
+        if atom == 'none':
+            break
+        else:
+            for i in range(atom_number):
+                if atoms[i].name == atom:
+                    ind.append(i)
+                    
+    collect_atoms = []
+
+
+    if ind != []:
+        atom_number = atom_number - len(ind)
+        for i in ind:
+            collect_atoms.append(atoms[i])
+
+    for atom in collect_atoms:
+        atoms.remove(atom)
+                    
+    return(atoms, atom_number)
+
+def selecting_cores(atoms, atom_number):
+    """
+    This function selects the cores and creates a list
+
+    Parameters
+    ----------
+    atoms : list
+        list of instances of class Atoms.
+    atom_number : int
+        total number of atom types
+
+    Returns
+    -------
+    numpy.ndarray of core indexes and numpy.ndarray of core names
+
+    """
+    
+    
+    cores = []
+    cores_names = []
+
+    for i in range(atom_number):
+        if atoms[i].name != 'D':
+            cores.append(atoms[i].indexes)
+            for j in range(atoms[i].number):
+                cores_names.append(atoms[i].name)
+
+
+    cores = np.concatenate(cores)  
+
+
+    j = np.argsort(cores)
+    cores = cores[j]
+    cores_names = np.array(cores_names)[j]
+    
+    return(cores, cores_names)
+
+def selecting_drudes(atoms, atom_number):
+    """
+    This function selects the drudes 
+    
+    Parameters
+    ----------
+    atoms : list
+        list of instances of class Atoms.
+    atom_number : int
+        total number of atom types
+
+    Returns
+    -------
+    numpy.ndarray of drude indexes.
+
+    """
+    for i in range(atom_number):
+        if atoms[i].name == 'D':
+            drudes = atoms[i].indexes
+    
+    return(drudes)
+    
+
+
+
+def drude_cores(drudes, cores, cores_names, t, fr):
+    """
+    This function creates drude-core pairs and calculates their distance
+
+    Parameters
+    ----------
+    drudes : numpy.ndarray 
+        array of drude indexes
+    cores : numpy.ndarray
+        array of core indexes
+    cores_names : numpy.ndarray 
+        array of core names
+    t : mdtraj.trajectory
+        trajectory from MDtraj
+
+    Returns
+    -------
+    numpy.ndarray of core indexes, core names, distance in first step of trajectory, 
+    distance in last step of trajectory, distance change between first and last step.
+
+    """
+    
+    if len(cores)==len(drudes):
+        pairs = np.stack((cores,drudes), axis=1)
+    else:
+        print('SOMETHING WENT WRONG, number of CORES do not match number of DRUDES')
+
+
+    #calculating the distances and attribute it to the right atoms
+    
+    
+    dist = md.compute_distances(t, pairs)
+    dist_f = dist[fr,:]
+
+
+    results = np.stack((cores, cores_names, dist_f), axis=1)
+    
+    return(results)
+
+# -----------------------------------------------------------------------------------------
+
+def plot_drude(data, atoms, plot_var,fr):
+    '''
+    This function plots the drude-core distances in angstrom as a function of the core index.
+
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        array of core indexes, core names, distance in first step of trajectory, 
+        distance in last step of trajectory, distance change between first and last step
+    atoms : list
+        list of instances of class Atoms.
+    plot_var : string
+        string indicating the plot to save.
+    dire : string
+        string of directory where the plot will be saved
+
+    Returns
+    -------
+    .png image of the chosen plot at the given directory
+
+    '''
+    
+    
+    
+    x = data[:,0].astype(float)
+    y = data[:,2].astype(float)
+    f_str = str(fr)
+
+    
+
+    cmap = plt.colormaps['tab10']
+    
+    #distances in angstrom
+    y *= 10
+
+
+    names = []
+    for i in range(len(atoms)):
+        if atoms[i].name != 'D':
+            names.append(atoms[i].name)
+    
+        
+    color_label = [float(hash(i) % 100) / 100 for i in names]  
+    color_label_rgba = cmap(color_label)
+    
+    
+    
+    label_data = []
+    
+    for i in range(len(atoms)-1):
+        label_data.append(patches.Patch(color=color_label_rgba[i], label=names[i], alpha=0.7 ))
+    
+    colors = [float(hash(i) % 100) / 100 for i in data[:,1]] 
+    colors_rgba = cmap(colors)
+    
+    
+    
+
+    
+    ax = plt.axes()
+    
+    ax.scatter(x, y, s=100, c=colors_rgba, marker='.', alpha=0.5)
+    ax.set(xlabel='Atom Index', ylabel='D-C Distance / Å',
+              title='Drude Core distance in frame number ' +f_str)
+        
+    ax.legend(handles=label_data, loc='best' )
+    
+    if plot_var == True:
+        
+        filename = "distance_"+f_str+"_frame.png"
+        plt.savefig(filename, dpi=300)
+        
+# --------------------------------------------------------------------------------------
+
+def main():
+
+    ########################################################################
+                  ############## GETTING INPUT #############
+    #########################################################################              
+                  
+    # getting input from bash through ArgumentParser class of argparse
+    
+    parser = argparse.ArgumentParser(description='Calculates Drude-Core distances in a frame of a trajectory.\n')
+    
+    # getting input file POSITIONAL ARGUMENT == MANDATORY ARGUMENT
+    
+    parser.add_argument('traj', action='store',
+                        help="lammps trajectory file",
+                        type=str, metavar='dump.lammpstrj')
+    
+    
+    # getting other inputs OPTIONAL ARGUMENTS
+    
+    # .pdb file with topology REQUIRED
+    
+    parser.add_argument('-t','--topo', action='store', 
+                        help=".pdb topology file of the chosen trajectory",
+                        type=str, required=True, metavar = 'topology.pdb')
+    
+    # Atoms in trajectory REQUIRED
+    
+    parser.add_argument('-a','--atoms', action='store', 
+                        help="Atoms present in the trajectory including drudes as D",
+                        type=str, nargs= '+')
+    
+    # Atoms without drudes
+    
+    parser.add_argument('-n','--nodrudes', action='store', 
+                        help="Atoms present in the trajectory without drudes. "\
+                        " DEFAULT: nodrudes='none'", type=str, nargs= '*', default=['none'], 
+                        metavar='nodrudes')
+    
+    # Trajectory frame to analyze
+        
+    parser.add_argument('-f','--frame', action='store', 
+                        help="Frame of the trajectory in which to calculate the distances, "\
+                        " -1 last frame and 0 first frame"\
+                        " DEFAULT: frame==-1", default=-1, type=int,
+                        metavar='frame')
+        
+    # Save file option
+    
+    parser.add_argument('-s','--savefile', action='store', 
+                        help="Choose to save .csv output files containing D-C distances."\
+                        " DEFAULT: savefile==False", default=False, type=bool,
+                        metavar='savefile')
+    
+    # Plotting option
+        
+    parser.add_argument('-p','--plot', action='store', 
+                        help="Choose to save .png of the D-C distance vs atomic index plot. "\
+                        " DEFAULT: plot==True", default=True, type=bool,
+                        metavar='plot') 
+    
+    args = parser.parse_args()
+        
+    ########################################################################
+                  ############## ASSIGNING VARIABLES #############
+    ######################################################################### 
+    
+    
+    # assigning arguments to variables 
+    
+    traj = args.traj
+    topo = args.topo
+    atom_types = args.atoms
+    no_drudes = args.nodrudes
+    save_file = args.savefile
+    plot_var = args.plot
+    fr = args.frame
+    f_str = str(fr)
+    atom_number = len(atom_types)
+    
+    
+    
+    atoms = []
+    
+    # loading trajectory
+    
+    t = md.load_lammpstrj(traj, top=topo)
+    topology = t.topology
+    
+    ########################################################################
+                  ############## PRINTING INPUT #############
+    ######################################################################### 
+    
+    # checking trajectory is loaded properly
+    
+    print('\n')
+    print('The trajectory you uploaded is:')
+    print(t)
+    print('\n')
+    
+    
+    # Creating istances for calss atoms
+    
+    for i in range(atom_number): 
+        indexes = topology.select('name '+atom_types[i])
+        atoms.append(Atoms(atom_types[i],indexes))
+        
+    print('The atoms it contains are:')
+    print(atom_types)
+    print('\n')
+    
+    
+    
+    ########################################################################
+            ############## CALCULATING DISTANCES #############
+    ######################################################################### 
+    
+           
+    # removing atoms with no drudes
+         
+    atoms, atom_number = remove_no_drudes(atoms, no_drudes, atom_number)    
+    
+    # selecting only drudes
+    
+    drudes = selecting_drudes(atoms, atom_number)
+    
+    # Selecting only cores and creating cores name list
+    
+    cores, cores_names = selecting_cores(atoms, atom_number)
+    
+    
+    # making drude core pairs and caluclating distances
+    
+    
+    results = drude_cores(drudes, cores, cores_names, t, fr)
+    
+    
+    
+    ########################################################################
+                  ############## PRINTING OUTPUT #############
+    ######################################################################### 
+    
+    
+    # Printing max distances
+    
+    l = np.argsort(-results[:,2].astype(float))
+    max_results = results[l]
+    
+    
+    print('First five highest distances in the '+str(fr)+' frame: \n %s \n %s \n %s \n' 
+          % (max_results[:5,0], max_results[:5,1], max_results[:5,2].astype(float)*10))
+    
+    
+    
+    
+    # Saving files
+    
+    
+    
+    
+    if save_file == True:
+        filename = "distance_"+f_str+"_frame.csv"
+        with open(filename, "w") as f:
+            f.write("index,name,core/drude-distance" + "\n")
+            for k in range(len(cores)):
+                f.write(results[k,0] + "," + results[k,1] + "," + results[k,2] + "," +"\n")
+            f.close()
+        
+        
+        print(filename, " saved ")
+    
+    
+    # plotting
+    
+    plot_drude(results, atoms, plot_var, fr)
+    
+    if plot_var == True:
+        filename = "distance_"+f_str+"_frame.png"
+        print(filename, " saved")
+        print('\n')
+        
+# -----------------------------------------------------------------------------------------
+        
+if __name__ == '__main__':
+    main()
